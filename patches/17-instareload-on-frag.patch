@@ -1,0 +1,49 @@
+--- a/fpsgame/server.cpp
++++ b/fpsgame/server.cpp
+@@ -2257,6 +2257,10 @@ namespace server
+ 
+     void startintermission() { gamelimit = min(gamelimit, gamemillis); checkintermission(true); }
+ 
++    // SwiftGibs: instant reload on a confirmed frag. The server owns this rule; off by default so a
++    // stock match is unchanged. Enable per server in server-init.cfg: serverinstareload 1
++    VAR(serverinstareload, 0, 0, 1);
++
+     void dodamage(clientinfo *target, clientinfo *actor, int damage, int gun, const vec &hitpush = vec(0, 0, 0))
+     {
+         gamestate &ts = target->state;
+@@ -2275,6 +2279,10 @@ namespace server
+             target->state.deaths++;
+             int fragvalue = smode ? smode->fragvalue(target, actor) : (target==actor || isteam(target->team, actor->team) ? -1 : 1);
+             actor->state.frags += fragvalue;
++            // SwiftGibs: a confirmed enemy frag clears the fragger's reload wait. fragvalue>0 already
++            // excludes suicides and teamkills; the CS_ALIVE test is the "unless you are dead" case, so a
++            // trade where both players die grants nothing. Checked before the target is marked CS_DEAD.
++            if(serverinstareload && fragvalue>0 && actor->state.state==CS_ALIVE) actor->state.gunwait = 0;
+             if(fragvalue>0)
+             {
+                 int friends = 0, enemies = 0; // note: friends also includes the fragger
+--- a/fpsgame/fps.cpp
++++ b/fpsgame/fps.cpp
+@@ -693,6 +693,11 @@ namespace game
+     // baked verbatim into a clickable guibutton action and executed on click).
+     ICOMMAND(profilenamevalid, "s", (char *name), intret(validprofilename(name) ? 1 : 0));
+ 
++    // SwiftGibs: clear our own reload wait when the server confirms our frag. Needed because the client
++    // gates its own fire (weapon.cpp: attacktime<gunwait), so the server rule alone cannot let us shoot
++    // early. Off by default -- on a server without serverinstareload the early shot is simply rejected.
++    VARP(instareload, 0, 0, 1);
++
+     void killed(fpsent *d, fpsent *actor)
+     {
+         if(d->state==CS_EDITING)
+@@ -735,6 +740,10 @@ namespace game
+             if(d==player1) conoutf(contype, "\f2%s got fragged by %s", dname, aname);
+             else conoutf(contype, "\f2%s fragged %s", aname, dname);
+         }
++        // SwiftGibs: server-confirmed enemy frag (this runs from N_DIED) -> drop our reload wait,
++        // unless we died in the trade. isteam() is m_teammode-gated, so FFA frags always count.
++        if(instareload && actor==player1 && d!=player1 && !isteam(d->team, actor->team)
++           && player1->state==CS_ALIVE) player1->gunwait = 0;
+         deathstate(d);
+ 		ai::killed(d, actor);
+     }
